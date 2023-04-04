@@ -10,18 +10,22 @@ pub const Renderer = struct {
     windowWidth: u32 = 0,
     windowHeight: u32 = 0,
 
-    const RendererError = error{InitializionError};
+    const RendererError = error{
+        InitializationError,
+        CreateWindowError,
+        LoadExtensionsError,
+    };
 
     pub fn initialize(self: *@This(), width: u32, height: u32, title: [:0]const u8) !void {
         if (!glfw.init(.{})) {
             self.terminate();
-            return RendererError.InitializionError;
+            return RendererError.InitializationError;
         }
 
         self.windowWidth = width;
         self.windowHeight = height;
 
-        self.window = createWindow(width, height, title) orelse @panic("Failed to init window.");
+        self.window = createWindow(width, height, title) orelse return RendererError.CreateWindowError;
         try windowRendererMap.put(&self.window, self);
 
         glfw.makeContextCurrent(self.window);
@@ -29,7 +33,7 @@ pub const Renderer = struct {
         self.window.setFramebufferSizeCallback(framebufferSizeCallback);
         glfw.swapInterval(1);
 
-        gl.load(self.window, glGetProcAddress) catch @panic("Failed to load opengl extensions.");
+        gl.load(self.window, glGetProcAddress) catch return RendererError.LoadExtensionsError;
 
         gl.viewport(0, 0, @intCast(c_int, width), @intCast(c_int, height));
 
@@ -45,17 +49,32 @@ pub const Renderer = struct {
         glfw.pollEvents();
     }
 
+    pub fn clearScreen(_: @This()) void {
+        gl.clear(gl.COLOR_BUFFER_BIT);
+    }
+
+    pub fn swapBuffers(self: @This()) void {
+        self.window.swapBuffers();
+    }
+
     pub fn windowShouldClose(self: @This()) bool {
         return self.window.shouldClose();
     }
 
-    fn createWindow(width: u32, height: u32, title: [:0]const u8) ?glfw.Window {
+    pub fn createWindow(width: u32, height: u32, title: [:0]const u8) ?glfw.Window {
         const windowHints = glfw.Window.Hints{
             .resizable = false,
+            .opengl_profile = .opengl_core_profile,
+            .context_version_major = 3,
+            .context_version_minor = 3,
         };
 
         const window = glfw.Window.create(width, height, title, null, null, windowHints);
         return window;
+    }
+
+    pub fn setClearColor(_: @This(), color: Color) void {
+        gl.clearColor(color.r, color.g, color.b, color.a);
     }
 
     fn errorCallback(error_code: glfw.ErrorCode, description: [:0]const u8) void {
@@ -73,4 +92,17 @@ pub const Renderer = struct {
         _ = window;
         return glfw.getProcAddress(proc);
     }
+};
+
+pub const Color = struct {
+    r: f16 = 0.0,
+    g: f16 = 0.0,
+    b: f16 = 0.0,
+    a: f16 = 1.0,
+
+    pub const white = Color{ .r = 1.0, .g = 1.0, .b = 1.0, .a = 1.0 };
+    pub const black = Color{ .r = 0.0, .g = 0.0, .b = 0.0, .a = 1.0 };
+    pub const red = Color{ .r = 1.0, .g = 0.0, .b = 0.0, .a = 1.0 };
+    pub const green = Color{ .r = 0.0, .g = 1.0, .b = 0.0, .a = 1.0 };
+    pub const blue = Color{ .r = 0.0, .g = 0.0, .b = 1.0, .a = 1.0 };
 };
