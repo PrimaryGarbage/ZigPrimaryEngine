@@ -6,16 +6,16 @@ const Color = @import("color.zig").Color;
 
 var windowRendererMap = std.AutoHashMap(*const glfw.Window, *Renderer).init(std.heap.page_allocator);
 
+const RendererError = error{
+    InitializationError,
+    CreateWindowError,
+    LoadExtensionsError,
+};
+
 pub const Renderer = struct {
     window: glfw.Window = undefined,
     windowWidth: u32 = 0,
     windowHeight: u32 = 0,
-
-    const RendererError = error{
-        InitializationError,
-        CreateWindowError,
-        LoadExtensionsError,
-    };
 
     pub fn initialize(self: *@This(), width: u32, height: u32, title: [:0]const u8) !void {
         if (!glfw.init(.{})) {
