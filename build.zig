@@ -26,6 +26,7 @@ pub fn build(b: *std.Build) void {
     });
 
     exe.addModule("gl", b.createModule(.{ .source_file = .{ .path = "external/lib/gl/gl.zig" } }));
+    exe.addModule("zlm", b.createModule(.{ .source_file = .{ .path = "external/lib/zlm/zlm.zig" } }));
     exe.addModule("glfw", glfw.module(b));
     glfw.link(b, exe, .{}) catch @panic("Failed to link glfw!");
 

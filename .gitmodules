@@ -1,3 +1,6 @@
 [submodule "external/lib/mach-glfw"]
 	path = external/lib/mach-glfw
 	url = https://github.com/hexops/mach-glfw
+[submodule "external/lib/zlm"]
+	path = external/lib/zlm
+	url = https://github.com/ziglibs/zlm

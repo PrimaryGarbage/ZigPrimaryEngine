@@ -1,8 +1,10 @@
 const std = @import("std");
 const glfw = @import("glfw");
 const gl = @import("gl");
+const zlm = @import("zlm");
 const log = std.log.scoped(.Renderer);
 const Color = @import("color.zig").Color;
+const Pixel = @import("pixel.zig").Color;
 
 var windowRendererMap = std.AutoHashMap(*const glfw.Window, *Renderer).init(std.heap.page_allocator);
 
@@ -16,6 +18,8 @@ pub const Renderer = struct {
     window: glfw.Window = undefined,
     windowWidth: u32 = 0,
     windowHeight: u32 = 0,
+
+    var drawPixelArray = std.ArrayList(zlm.Vec2).init(std.heap.page_allocator);
 
     pub fn initialize(self: *@This(), width: u32, height: u32, title: [:0]const u8) !void {
         if (!glfw.init(.{})) {
@@ -36,6 +40,11 @@ pub const Renderer = struct {
 
         gl.load(self.window, glGetProcAddress) catch return RendererError.LoadExtensionsError;
 
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        gl.enable(gl.DEPTH_TEST);
+        gl.depthFunc(gl.LEQUAL);
+
         gl.viewport(0, 0, @intCast(c_int, width), @intCast(c_int, height));
 
         log.info("GLFW initialized successfully.\n", .{});
@@ -43,6 +52,7 @@ pub const Renderer = struct {
 
     pub fn terminate(_: @This()) void {
         glfw.terminate();
+        drawPixelArray.deinit();
         log.info("GLFW terminated successfully.\n", .{});
     }
 
@@ -76,6 +86,12 @@ pub const Renderer = struct {
 
     pub fn setClearColor(_: @This(), color: Color) void {
         gl.clearColor(color.r, color.g, color.b, color.a);
+    }
+
+    pub fn putPixel(self: @This(), pixel: Pixel) void {
+        // TODO: Implement this function using transparent window sized texture.
+        _ = self;
+        _ = pixel;
     }
 
     fn errorCallback(error_code: glfw.ErrorCode, description: [:0]const u8) void {
