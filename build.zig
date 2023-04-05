@@ -25,10 +25,13 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    exe.addIncludePath("external/include");
+    exe.addCSourceFile("external/lib/stb_image_impl.c", &[_][]const u8{});
     exe.addModule("gl", b.createModule(.{ .source_file = .{ .path = "external/lib/gl/gl.zig" } }));
     exe.addModule("zlm", b.createModule(.{ .source_file = .{ .path = "external/lib/zlm/zlm.zig" } }));
     exe.addModule("glfw", glfw.module(b));
     glfw.link(b, exe, .{}) catch @panic("Failed to link glfw!");
+    exe.linkLibC();
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
@@ -60,10 +63,13 @@ pub fn build(b: *std.Build) void {
 
     // Creates a step for unit testing.
     const exe_tests = b.addTest(.{
-        .root_source_file = .{ .path = "src/main.zig" },
+        .root_source_file = .{ .path = "src/tests.zig" },
         .target = target,
         .optimize = optimize,
     });
+    exe_tests.linkLibC();
+    exe_tests.addCSourceFile("external/lib/stb_image_impl.c", &[_][]const u8{});
+    exe_tests.addIncludePath("external/include");
 
     // Similar to creating the run step earlier, this exposes a `test` step to
     // the `zig build --help` menu, providing a way for the user to request

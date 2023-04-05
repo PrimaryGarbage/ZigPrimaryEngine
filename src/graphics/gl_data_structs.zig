@@ -11,23 +11,23 @@ pub const VertexBuffer = struct {
         gl.bindBuffer(gl.ARRAY_BUFFER, id);
         gl.bufferData(gl.ARRAY_BUFFER, data.len, @ptrCast(?*anyopaque, data.prt), gl.STATIC_DRAW);
         layout.bind();
-        return VertexBuffer {
+        return VertexBuffer{
             .glId = id,
             .layout = layout,
         };
     }
 
     pub fn destroy(self: *@This()) void {
-        if(glId > 0) {
+        if (self.glId > 0) {
             self.unbind();
-            gl.deleteBuffers(1, &glId);
+            gl.deleteBuffers(1, &self.glId);
             self.glId = 0;
             self.layout.destroy();
         }
     }
 
     pub fn bind(self: @This()) void {
-        if(self.glId > 0) gl.bindVertexArray(self.glId);
+        if (self.glId > 0) gl.bindVertexArray(self.glId);
     }
 
     pub fn unbind(_: @This()) void {
@@ -44,7 +44,7 @@ pub const VertexBufferLayout = struct {
     }
 
     pub fn push(self: *@This(), comptime T: type, count: u32, normalized: bool) void {
-        const glType: u32 = switch (type) {
+        const glType: u32 = switch (T) {
             @TypeOf(i32) => gl.INT,
             @TypeOf(f32) => gl.FLOAT,
             @TypeOf(u8) => gl.UNSIGNED_BYTE,
@@ -90,14 +90,14 @@ pub const IndexBuffer = struct {
         gl.genBuffers(1, &id);
         gl.bindBuffers(gl.ELEMENT_ARRAY_BUFFER, id);
         gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, data.len * @sizeOf(u32), @ptrCast(?*const anyopaque, data.ptr), gl.STATIC_DRAW);
-        return IndexBuffer {
+        return IndexBuffer{
             .glId = id,
             .count = data.len,
         };
     }
-    
+
     pub fn destroy(self: @This()) void {
-        if(self.glId > 0) {
+        if (self.glId > 0) {
             self.unbind();
             gl.deleteBuffers(1, &self.glId);
             self.glId = 0;
@@ -105,10 +105,10 @@ pub const IndexBuffer = struct {
     }
 
     pub fn bind(self: @This()) void {
-        if(self.glId > 0) gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, self.glId);
+        if (self.glId > 0) gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, self.glId);
     }
 
     pub fn unbind(_: @This()) void {
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, 0);
     }
-}
+};
