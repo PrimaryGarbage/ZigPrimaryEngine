@@ -29,6 +29,7 @@ pub fn build(b: *std.Build) void {
     exe.addCSourceFile("external/lib/stb_image_impl.c", &[_][]const u8{});
     exe.addModule("gl", b.createModule(.{ .source_file = .{ .path = "external/lib/gl/gl.zig" } }));
     exe.addModule("zlm", b.createModule(.{ .source_file = .{ .path = "external/lib/zlm/zlm.zig" } }));
+    exe.addModule("zig-string", b.createModule(.{ .source_file = .{ .path = "external/lib/zig-string/zig-string.zig" } }));
     exe.addModule("glfw", glfw.module(b));
     glfw.link(b, exe, .{}) catch @panic("Failed to link glfw!");
     exe.linkLibC();

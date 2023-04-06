@@ -2,6 +2,7 @@ const std = @import("std");
 const glfw = @import("glfw");
 const gl = @import("gl");
 const zlm = @import("zlm");
+const String = @import("zig-string").String;
 const stbi = @cImport(@cInclude("stb_image.h"));
 
 pub const Color = struct {
@@ -32,6 +33,7 @@ pub const Renderer = struct {
         CreateWindowError,
         LoadExtensionsError,
     };
+    //........................................................................
 
     window: glfw.Window = undefined,
     windowWidth: u32 = 0,
@@ -241,6 +243,7 @@ pub const IndexBuffer = struct {
 
 const Texture = struct {
     const Error = error{BindError};
+    //.......................................................
 
     glId: u32 = 0,
     width: u32 = 0,
@@ -307,6 +310,7 @@ const Texture = struct {
 pub const Image = struct {
     pub const Format = enum { none, png, jpeg, bmp };
     pub const Error = error{LoadingError};
+    //...............................................................
 
     data: ?[*]u8,
     width: u32 = 0,
@@ -369,5 +373,56 @@ pub const Image = struct {
             .jpeg, .bmp => gl.RGB,
             _ => 0,
         };
+    }
+};
+
+const Shader = struct {
+    const ShaderProgramSource = struct {
+        vertexSource: []const u8,
+        fragmentSource: []const u8,
+    };
+    const Error = error{parsingError};
+    //...............................................
+
+    glId: u32 = 0,
+
+    pub fn initFromFile(filepath: []const u8) !Shader {
+        const file = try std.fs.cwd().openFile(filepath, .{});
+        defer file.close();
+        const fileContent = file.reader().readAllAlloc(std.heap.page_allocator, 9999999);
+        defer std.heap.page_allocator.free()
+        const source = parseShader(fileContent);
+    }
+
+    fn parseShader(text: []const u8) !ShaderProgramSource {
+        const ShaderType = enum(i32) { none = -1, vertex = 0, fragment = 1 };
+        var ss = [2]String{String.init(std.heap.page_allocator)} ** 2;
+        defer for (ss) |s| s.deinit();
+
+        var shaderType = ShaderType.none;
+        var currentLine = String.init(std.heap.page_allocator);
+        defer currentLine.deinit();
+        const lines = std.mem.split(u8, text, "\n");
+
+        for (lines) |line| {
+            if (line == null) break;
+            currentLine.clear();
+            currentLine.concat(line);
+            currentLine.trim(" ");
+
+            if (currentLine.isEmpty()) continue;
+
+            if (currentLine.find("#shader")) {
+                if (currentLine.find("vertex") != null) {
+                    shaderType = ShaderType.vertex;
+                } else if (currentLine.find("fragment") != null) {
+                    shaderType = ShaderType.fragment;
+                }
+            } else {
+                ss[@enumToInt(shaderType)].concat(currentLine.str() ++ "\n");
+            }
+        }
+
+        return .{ .vertexSource = ss[0], .fragmentSource = ss[1] };
     }
 };
