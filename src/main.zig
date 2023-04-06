@@ -9,5 +9,5 @@ pub fn main() !void {
     };
     var app = try primaryApp.App.init(settings);
     defer app.terminate();
-    app.run();
+    try app.run();
 }

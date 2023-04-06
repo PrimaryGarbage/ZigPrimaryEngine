@@ -1,5 +1,7 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 
-pub fn gpalloc() std.heap.Allocator {
-    return std.heap.GeneralPurposeAllocator(.{ .safety = true }).allocator();
+pub fn gpalloc() Allocator {
+    var gpa = std.heap.GeneralPurposeAllocator(.{ .safety = true }){};
+    return gpa.allocator();
 }

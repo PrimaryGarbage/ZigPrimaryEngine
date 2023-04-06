@@ -4,7 +4,33 @@ const gl = @import("gl");
 const zlm = @import("zlm");
 const utils = @import("../utilities.zig");
 const String = @import("zig-string").String;
+const log = std.log.scoped(.Graphics);
 const stbi = @cImport(@cInclude("stb_image.h"));
+
+//// *STATIC ////
+var defaultShader: Shader = undefined;
+var defaultTexture: Texture = undefined;
+var uniformLocationCache: std.StringHashMap(i32) = undefined;
+
+pub fn staticInit() !void {
+    defaultShader = try Shader.initFromFile("res/shaders/default.glsl");
+    defaultTexture = try Texture.initFromFile("res/img/SayGex.jpg");
+    uniformLocationCache = std.StringHashMap(i32).init(utils.gpalloc());
+    log.info("Static data initialized.\n", .{});
+}
+
+pub fn staticDeinit() void {
+    defaultShader.destroy();
+    defaultTexture.destroy();
+    uniformLocationCache.deinit();
+    log.info("Static data deinitialized.\n", .{});
+}
+
+pub fn getDefaultShader() *Shader {
+    return &defaultShader;
+}
+
+//// STATIC* ////
 
 pub const Color = struct {
     r: f16 = 0.0,
@@ -25,7 +51,6 @@ pub const Pixel = struct {
 };
 
 pub const Renderer = struct {
-    const log = std.log.scoped(.Renderer);
     var windowRendererMap = std.AutoHashMap(*const glfw.Window, *Renderer).init(std.heap.page_allocator);
     var drawPixelArray = std.ArrayList(zlm.Vec2).init(std.heap.page_allocator);
 
@@ -39,6 +64,9 @@ pub const Renderer = struct {
     window: glfw.Window = undefined,
     windowWidth: u32 = 0,
     windowHeight: u32 = 0,
+    projectMat: zlm.Mat4 = zlm.Mat4.identity,
+    viewMat: zlm.Mat4 = zlm.Mat4.identity,
+    modelMat: zlm.Mat4 = zlm.Mat4.identity,
 
     pub fn initialize(self: *@This(), width: u32, height: u32, title: [:0]const u8) !void {
         if (!glfw.init(.{})) {
@@ -113,6 +141,17 @@ pub const Renderer = struct {
         _ = pixel;
     }
 
+    pub fn drawMesh(self: @This(), mesh: Mesh, shader: ?Shader) !void {
+        try mesh.vb.bind();
+        const mvp: zlm.Mat4 = self.projectMat.mul(self.viewMat).mul(self.modelMat);
+        for (mesh.submeshes.items) |submesh| {
+            try submesh.bind();
+            if (shader) |sh| try sh.bind();
+            try submesh.shader.setUniformMat4f("u_mvp", mvp);
+            gl.drawElements(gl.TRIANGLES, @intCast(c_int, submesh.ib.count), gl.UNSIGNED_INT, null);
+        }
+    }
+
     fn errorCallback(error_code: glfw.ErrorCode, description: [:0]const u8) void {
         std.log.err("[RENDERER_ERROR] Code '{}': {s}", .{ error_code, description });
     }
@@ -131,10 +170,13 @@ pub const Renderer = struct {
 };
 
 pub const VertexBuffer = struct {
-    glId: u32 = 0,
-    layout: VertexBufferLayout = VertexBufferLayout{},
+    const Error = error{BindError};
+    //..................................
 
-    pub fn init(data: []u8, layout: VertexBufferLayout) VertexBuffer {
+    glId: u32 = 0,
+    layout: VertexBufferLayout = undefined,
+
+    pub fn init(data: []const u8, layout: VertexBufferLayout) VertexBuffer {
         var id: u32 = 0;
         gl.genBuffers(1, &id);
         gl.bindBuffer(gl.ARRAY_BUFFER, id);
@@ -155,8 +197,9 @@ pub const VertexBuffer = struct {
         }
     }
 
-    pub fn bind(self: @This()) void {
-        if (self.glId > 0) gl.bindVertexArray(self.glId);
+    pub fn bind(self: @This()) !void {
+        if (self.glId == 0) return Error.BindError;
+        gl.bindVertexArray(self.glId);
     }
 
     pub fn unbind(_: @This()) void {
@@ -165,8 +208,14 @@ pub const VertexBuffer = struct {
 };
 
 pub const VertexBufferLayout = struct {
-    elements: std.ArrayList(VertexBufferElement) = std.ArrayList(VertexBufferElement).init(std.heap.page_allocator),
+    elements: std.ArrayList(VertexBufferElement),
     stride: u32 = 0,
+
+    pub fn init() VertexBufferLayout {
+        return VertexBufferLayout{
+            .elements = std.ArrayList(VertexBufferElement).init(utils.gpalloc()),
+        };
+    }
 
     pub fn destroy(self: @This()) void {
         self.elements.deinit();
@@ -177,7 +226,7 @@ pub const VertexBufferLayout = struct {
             @TypeOf(i32) => gl.INT,
             @TypeOf(f32) => gl.FLOAT,
             @TypeOf(u8) => gl.UNSIGNED_BYTE,
-            _ => @compileError("Failed to match value type in vertex buffer layout."),
+            else => @compileError("Failed to match value type in vertex buffer layout."),
         };
 
         self.elements.append(.{ glType, count, @boolToInt(normalized) });
@@ -211,6 +260,9 @@ pub const VertexBufferElement = struct {
 };
 
 pub const IndexBuffer = struct {
+    const Error = error{BindError};
+    //..................................
+
     glId: u32 = 0,
     count: u32 = 0,
 
@@ -233,8 +285,9 @@ pub const IndexBuffer = struct {
         }
     }
 
-    pub fn bind(self: @This()) void {
-        if (self.glId > 0) gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, self.glId);
+    pub fn bind(self: @This()) !void {
+        if (self.glId == 0) return Error.BindError;
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, self.glId);
     }
 
     pub fn unbind(_: @This()) void {
@@ -242,7 +295,7 @@ pub const IndexBuffer = struct {
     }
 };
 
-const Texture = struct {
+pub const Texture = struct {
     const Error = error{BindError};
     //.......................................................
 
@@ -251,8 +304,8 @@ const Texture = struct {
     height: u32 = 0,
     channelCount: u32 = 0,
 
-    pub fn initFromFile(filepath: []const u8) !Texture {
-        const image = try Image.loadFromFile(filepath);
+    pub fn initFromFile(filepath: [:0]const u8) !Texture {
+        var image = try Image.loadFromFile(filepath);
         defer image.destroy();
         return try initFromImage(image);
     }
@@ -302,34 +355,54 @@ const Texture = struct {
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
         gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-        const glImageFormat: u32 = Image.getGLFormat(format);
-        gl.texImage2D(gl.TEXTURE_2D, 0, glImageFormat, width, height, 0, glImageFormat, gl.UNSIGNED_BYTE, @ptrCast(?*const anyopaque, data.ptr));
+        const glImageFormat = Image.getGLFormat(format);
+        gl.texImage2D(gl.TEXTURE_2D, 0, glImageFormat, @intCast(c_int, width), @intCast(c_int, height), 0, @intCast(c_uint, glImageFormat), gl.UNSIGNED_BYTE, @ptrCast(?*const anyopaque, data.ptr));
         gl.bindTexture(gl.TEXTURE_2D, 0);
     }
 };
 
 pub const Image = struct {
-    pub const Format = enum { none, png, jpeg, bmp };
-    pub const Error = error{LoadingError};
+    pub const Format = enum {
+        none,
+        png,
+        jpeg,
+        jpg,
+        bmp,
+
+        const nameTable = [_][]const u8{
+            "none", "png", "jpeg", "jpg", "bmp",
+        };
+
+        pub fn fromStr(str: []const u8) Format {
+            for (nameTable, 0..) |name, i| {
+                if (std.mem.eql(u8, str, name)) return @intToEnum(Format, i);
+            }
+            return Format.none;
+        }
+    };
+    pub const Error = error{ LoadingError, FormatError };
     //...............................................................
 
-    data: ?[*]u8,
+    data: []u8,
     width: u32 = 0,
     height: u32 = 0,
     channelCount: u32 = 0,
     format: Format = Format.none,
 
-    pub fn loadFromFile(filepath: [:0]const u8, format: Format) !Image {
+    pub fn loadFromFile(filepath: [:0]const u8) !Image {
         try std.fs.cwd().access(filepath, .{});
+        const format = extractFileFormat(filepath);
+        if (format == Format.none) return Error.FormatError;
 
         var x: c_int = 0;
         var y: c_int = 0;
         var c: c_int = 0;
-        const loadedData = stbi.stbi_load(filepath, &x, &y, &c, getChannelCount(format));
+        const loadedData: [*c]u8 = stbi.stbi_load(filepath.ptr, &x, &y, &c, @intCast(c_int, getChannelCount(format)));
+        const len = @intCast(usize, x * y);
         if (loadedData == null) return Error.LoadingError;
 
         return Image{
-            .data = loadedData,
+            .data = loadedData[0..len],
             .width = @intCast(u32, x),
             .height = @intCast(u32, y),
             .channelCount = @intCast(u32, c),
@@ -341,7 +414,7 @@ pub const Image = struct {
         var x: c_int = 0;
         var y: c_int = 0;
         var c: c_int = 0;
-        const loadedData = stbi.stbi_load_from_memory(data.ptr, data.len, &x, &y, &c, getChannelCount(format));
+        const loadedData = stbi.stbi_load_from_memory(data.ptr, data.len, &x, &y, &c, @intCast(c_int, getChannelCount(format)));
         if (loadedData == null) return Error.LoadingError;
 
         return Image{
@@ -354,43 +427,47 @@ pub const Image = struct {
     }
 
     pub fn destroy(self: *@This()) void {
-        stbi.free(self.data);
+        stbi.free(self.data.ptr);
         self.width = 0;
         self.height = 0;
         self.channelCount = 0;
     }
 
-    pub fn getChannelCount(imageFormat: Format) i32 {
+    pub fn getChannelCount(imageFormat: Format) u32 {
         return switch (imageFormat) {
             .png => 4,
-            .jpeg, .bmp => 3,
+            .jpeg, .bmp, .jpg => 3,
             .none => 0,
         };
     }
 
-    fn getGLFormat(format: Image.ImageFormat) u32 {
+    fn getGLFormat(format: Format) c_int {
         return switch (format) {
             .png => gl.RGBA,
-            .jpeg, .bmp => gl.RGB,
-            _ => 0,
+            .jpeg, .bmp, .jpg => gl.RGB,
+            .none => 0,
         };
+    }
+
+    fn extractFileFormat(filepath: []const u8) Format {
+        const ext = std.mem.trimLeft(u8, std.fs.path.extension(filepath), ".");
+        return Format.fromStr(ext);
     }
 };
 
-const Shader = struct {
+pub const Shader = struct {
     const ShaderProgramSource = struct {
         vertexSource: []const u8,
         fragmentSource: []const u8,
     };
     const Error = error{ parsingError, compileError, bindError };
-    const log = std.log.scoped(.Shader);
     var currentBountShader: u32 = 0;
     //............................................................
 
     glId: u32 = 0,
 
     pub fn initFromFile(filepath: []const u8) !Shader {
-        const alloc = utils.pgalloc();
+        const alloc = utils.gpalloc();
         const file = try std.fs.cwd().openFile(filepath, .{});
         defer file.close();
         const fileContent = try file.reader().readAllAlloc(alloc, 9999999);
@@ -399,9 +476,9 @@ const Shader = struct {
     }
 
     pub fn initFromText(text: []const u8) !Shader {
-        const source = parseShader(text);
+        const source = try parseShader(text);
         return Shader{
-            .glId = createShaderProgram(source),
+            .glId = try createShaderProgram(source.vertexSource, source.fragmentSource),
         };
     }
 
@@ -410,6 +487,7 @@ const Shader = struct {
             unbind();
             gl.deleteProgram(self.glId);
             self.glId = 0;
+            self.uniformLocationCache.deinit();
         }
     }
 
@@ -426,50 +504,90 @@ const Shader = struct {
         currentBountShader = 0;
     }
 
+    pub fn setUniformMat4f(self: @This(), name: []const u8, matrix: zlm.Mat4) !void {
+        try self.bind();
+        gl.uniformMatrix4fv(self.getUniformLocation(name), 1, gl.FALSE, &matrix.fields[0][0]);
+    }
+
+    pub fn setUniform4f(self: @This(), name: []const u8, vec: zlm.Vec4) !void {
+        try self.bind();
+        gl.uniform4f(self.getUniformLocation(name), vec.x, vec.y, vec.z, vec.w);
+    }
+
+    pub fn setUniform2f(self: @This(), name: []const u8, vec: zlm.Vec2) !void {
+        try self.bind();
+        gl.uniform2f(self.getUniformLocation(name), vec.x, vec.y);
+    }
+
+    pub fn setUniform1f(self: @This(), name: []const u8, value: f32) !void {
+        try self.bind();
+        gl.uniform1f(self.getUniformLocation(name), value);
+    }
+
+    pub fn setUniform1i(self: @This(), name: []const u8, value: i32) !void {
+        try self.bind();
+        gl.uniform1i(self.getUniformLocation(name), value);
+    }
+
+    fn getUniformLocation(self: @This(), name: []const u8) i32 {
+        const foundLocation: ?i32 = uniformLocationCache.get(name);
+        if (foundLocation) |loc| {
+            return loc;
+        } else {
+            const location: i32 = gl.getUniformLocation(self.glId, name.ptr);
+            if (location == -1) {
+                log.warn("Uniform {s} wasn't found in the shader program!", name);
+            }
+            uniformLocationCache.put(name, location) catch unreachable;
+            return location;
+        }
+    }
+
     fn parseShader(text: []const u8) !ShaderProgramSource {
+        const alloc = utils.gpalloc();
         const ShaderType = enum(i32) { none = -1, vertex = 0, fragment = 1 };
-        var ss = [2]String{String.init(std.heap.page_allocator)} ** 2;
-        defer for (ss) |s| s.deinit();
+        var ss = [2]String{ String.init(alloc), String.init(alloc) };
+        defer for (&ss) |*s| s.deinit();
 
         var shaderType = ShaderType.none;
         var currentLine = String.init(std.heap.page_allocator);
         defer currentLine.deinit();
-        const lines = std.mem.split(u8, text, "\n");
+        var lines = std.mem.split(u8, text, "\n");
 
-        for (lines) |line| {
-            if (line == null) break;
+        while (lines.next()) |line| {
             currentLine.clear();
-            currentLine.concat(line);
-            currentLine.trim(" ");
+            try currentLine.concat(line);
+            currentLine.trim(&.{ ' ', '\r' });
 
             if (currentLine.isEmpty()) continue;
 
-            if (currentLine.find("#shader")) {
+            if (currentLine.find("#shader") != null) {
                 if (currentLine.find("vertex") != null) {
                     shaderType = ShaderType.vertex;
                 } else if (currentLine.find("fragment") != null) {
                     shaderType = ShaderType.fragment;
                 }
             } else {
-                ss[@enumToInt(shaderType)].concat(currentLine.str() ++ "\n");
+                try currentLine.concat("\n");
+                try ss[@intCast(usize, @enumToInt(shaderType))].concat(currentLine.str());
             }
         }
 
-        return .{ .vertexSource = ss[0], .fragmentSource = ss[1] };
+        return .{ .vertexSource = ss[0].str(), .fragmentSource = ss[1].str() };
     }
 
     fn compileShader(shaderType: u32, src: []const u8) !u32 {
         const alloc = utils.gpalloc();
-        const id: i32 = gl.createShader(shaderType);
-        gl.shaderSource(id, 1, &.{src}, null);
+        const id: u32 = gl.createShader(shaderType);
+        gl.shaderSource(id, 1, &[_][*]const u8{src.ptr}, null);
         gl.compileShader(id);
 
         var result: i32 = 0;
         gl.getShaderiv(id, gl.COMPILE_STATUS, &result);
         if (result == gl.FALSE) {
             var length: i32 = 0;
-            gl.GetShaderiv(id, gl.INFO_LOG_LENGTH, &length);
-            var message = try alloc.alloc(u8, length);
+            gl.getShaderiv(id, gl.INFO_LOG_LENGTH, &length);
+            var message = try alloc.alloc(u8, @intCast(u32, length));
             defer alloc.free(message);
             gl.getShaderInfoLog(id, length, &length, message.ptr);
             log.err("Failed to compile shader. Shader type: {}", shaderType);
@@ -481,10 +599,10 @@ const Shader = struct {
         return id;
     }
 
-    fn createShaderProgram(vertexSrc: []const u8, fragmentSrc: []const u8) u32 {
+    fn createShaderProgram(vertexSrc: []const u8, fragmentSrc: []const u8) !u32 {
         const program: u32 = gl.createProgram();
-        const vs: u32 = compileShader(gl.VERTEX_SHADER, vertexSrc);
-        const fs: u32 = compileShader(gl.FRAGMENT_SHADER, fragmentSrc);
+        const vs: u32 = try compileShader(gl.VERTEX_SHADER, vertexSrc);
+        const fs: u32 = try compileShader(gl.FRAGMENT_SHADER, fragmentSrc);
 
         gl.attachShader(program, vs);
         gl.attachShader(program, fs);
@@ -495,5 +613,83 @@ const Shader = struct {
         gl.deleteShader(fs);
 
         return program;
+    }
+};
+
+pub const SubMesh = struct {
+    ib: IndexBuffer,
+    shader: *const Shader,
+    texture: *const Texture,
+
+    pub fn init(indices: []const u32, shader: *const Shader, texture: *const Texture) SubMesh {
+        return SubMesh{
+            .ib = IndexBuffer.init(indices),
+            .shader = shader,
+            .texture = texture,
+        };
+    }
+
+    pub fn destroy(self: *@This()) void {
+        self.ib.destroy();
+    }
+
+    pub fn bind(self: @This()) !void {
+        try self.ib.bind();
+        try self.shader.bind();
+        try self.texture.bind();
+    }
+
+    pub fn unbind(self: @This()) !void {
+        try self.ib.unbind();
+        try self.shader.unbind();
+        try self.texture.unbind();
+    }
+};
+
+pub const Mesh = struct {
+    vb: VertexBuffer,
+    submeshes: std.ArrayList(SubMesh),
+
+    pub fn init(vb: VertexBuffer, submeshes: ?[]SubMesh) Mesh {
+        const alloc = utils.gpalloc();
+        const mesh = Mesh{
+            .vb = vb,
+            .submeshes = std.ArrayList(SubMesh).init(alloc),
+        };
+        if (submeshes) |subs| {
+            mesh.submeshes.appendSlice(subs);
+        }
+        return mesh;
+    }
+
+    pub fn destroy(self: *@This()) void {
+        self.vb.destroy();
+        for (self.submeshes.items) |sub| {
+            sub.destroy();
+        }
+    }
+};
+
+pub const Primitives = struct {
+    pub fn createRectangleMesh(width: f32, height: f32) Mesh {
+        const vertices = [_]f32{
+            0.0,   0.0,    0.0, 0.0,
+            width, 0.0,    1.0, 0.0,
+            width, height, 1.0, 1.0,
+            0.0,   height, 0.0, 1.0,
+        };
+        const indices = [_]u32{
+            0, 1, 2,
+            0, 2, 3,
+        };
+
+        var layout = VertexBufferLayout.init();
+        layout.push(f32, 2, false);
+        layout.push(f32, 2, false);
+
+        const vb = VertexBuffer.init(std.mem.sliceAsBytes(vertices[0..]), layout);
+        const subMesh = SubMesh.init(indices[0..], &defaultShader, &defaultTexture);
+
+        return Mesh.init(vb, &[_]SubMesh{subMesh});
     }
 };

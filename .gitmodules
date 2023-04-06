@@ -4,3 +4,6 @@
 [submodule "external/lib/zlm"]
 	path = external/lib/zlm
 	url = https://github.com/ziglibs/zlm
+[submodule "external/lib/zig-string"]
+	path = external/lib/zig-string
+	url = https://github.com/JakubSzark/zig-string
