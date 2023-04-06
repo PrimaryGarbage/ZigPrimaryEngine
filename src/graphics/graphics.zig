@@ -2,6 +2,7 @@ const std = @import("std");
 const glfw = @import("glfw");
 const gl = @import("gl");
 const zlm = @import("zlm");
+const utils = @import("../utilities.zig");
 const String = @import("zig-string").String;
 const stbi = @cImport(@cInclude("stb_image.h"));
 
@@ -381,17 +382,48 @@ const Shader = struct {
         vertexSource: []const u8,
         fragmentSource: []const u8,
     };
-    const Error = error{parsingError};
-    //...............................................
+    const Error = error{ parsingError, compileError, bindError };
+    const log = std.log.scoped(.Shader);
+    var currentBountShader: u32 = 0;
+    //............................................................
 
     glId: u32 = 0,
 
     pub fn initFromFile(filepath: []const u8) !Shader {
+        const alloc = utils.pgalloc();
         const file = try std.fs.cwd().openFile(filepath, .{});
         defer file.close();
-        const fileContent = file.reader().readAllAlloc(std.heap.page_allocator, 9999999);
-        defer std.heap.page_allocator.free()
-        const source = parseShader(fileContent);
+        const fileContent = try file.reader().readAllAlloc(alloc, 9999999);
+        defer alloc.free(fileContent);
+        return try initFromText(fileContent);
+    }
+
+    pub fn initFromText(text: []const u8) !Shader {
+        const source = parseShader(text);
+        return Shader{
+            .glId = createShaderProgram(source),
+        };
+    }
+
+    pub fn destroy(self: *@This()) void {
+        if (self.glId > 0) {
+            unbind();
+            gl.deleteProgram(self.glId);
+            self.glId = 0;
+        }
+    }
+
+    pub fn bind(self: @This()) !void {
+        if (self.glId == 0) return Error.bindError;
+        if (currentBountShader != self.glId) {
+            gl.useProgram(self.glId);
+            currentBountShader = self.glId;
+        }
+    }
+
+    pub fn unbind(_: @This()) void {
+        gl.useProgram(0);
+        currentBountShader = 0;
     }
 
     fn parseShader(text: []const u8) !ShaderProgramSource {
@@ -424,5 +456,44 @@ const Shader = struct {
         }
 
         return .{ .vertexSource = ss[0], .fragmentSource = ss[1] };
+    }
+
+    fn compileShader(shaderType: u32, src: []const u8) !u32 {
+        const alloc = utils.gpalloc();
+        const id: i32 = gl.createShader(shaderType);
+        gl.shaderSource(id, 1, &.{src}, null);
+        gl.compileShader(id);
+
+        var result: i32 = 0;
+        gl.getShaderiv(id, gl.COMPILE_STATUS, &result);
+        if (result == gl.FALSE) {
+            var length: i32 = 0;
+            gl.GetShaderiv(id, gl.INFO_LOG_LENGTH, &length);
+            var message = try alloc.alloc(u8, length);
+            defer alloc.free(message);
+            gl.getShaderInfoLog(id, length, &length, message.ptr);
+            log.err("Failed to compile shader. Shader type: {}", shaderType);
+            log.err("{s}", message);
+            gl.deleteShader(id);
+            return Error.compileError;
+        }
+
+        return id;
+    }
+
+    fn createShaderProgram(vertexSrc: []const u8, fragmentSrc: []const u8) u32 {
+        const program: u32 = gl.createProgram();
+        const vs: u32 = compileShader(gl.VERTEX_SHADER, vertexSrc);
+        const fs: u32 = compileShader(gl.FRAGMENT_SHADER, fragmentSrc);
+
+        gl.attachShader(program, vs);
+        gl.attachShader(program, fs);
+        gl.linkProgram(program);
+        gl.validateProgram(program);
+
+        gl.deleteShader(vs);
+        gl.deleteShader(fs);
+
+        return program;
     }
 };
