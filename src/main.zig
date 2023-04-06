@@ -1,6 +1,5 @@
 const std = @import("std");
 const primaryApp = @import("primary_app.zig");
-const image = @import("graphics/image.zig");
 
 pub fn main() !void {
     const settings = primaryApp.AppSettings{
