@@ -1,6 +1,6 @@
 const std = @import("std");
 const glfw = @import("glfw");
-const gl = @import("gl");
+const gl = @import("gl.zig");
 const zlm = @import("zlm");
 const utils = @import("../utilities.zig");
 const String = @import("zig-string").String;
@@ -85,14 +85,14 @@ pub const Renderer = struct {
         self.window.setFramebufferSizeCallback(framebufferSizeCallback);
         glfw.swapInterval(1);
 
-        gl.load(self.window, glGetProcAddress) catch return Error.LoadExtensionsError;
+        gl.loadExtensions(self.window, glGetProcAddress) catch return Error.LoadExtensionsError;
 
-        gl.enable(gl.BLEND);
-        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-        gl.enable(gl.DEPTH_TEST);
-        gl.depthFunc(gl.LEQUAL);
+        gl.enable(gl.blend);
+        gl.blendFunc(gl.srcAlpha, gl.oneMinusSrcAlpha);
+        gl.enable(gl.depthTest);
+        gl.depthFunc(gl.lequal);
 
-        gl.viewport(0, 0, @intCast(c_int, width), @intCast(c_int, height));
+        gl.viewport(0, 0, width, height);
 
         log.info("GLFW initialized successfully.\n", .{});
     }
@@ -108,7 +108,7 @@ pub const Renderer = struct {
     }
 
     pub fn clearScreen(_: @This()) void {
-        gl.clear(gl.COLOR_BUFFER_BIT);
+        gl.clear(gl.colorBufferBit);
     }
 
     pub fn swapBuffers(self: @This()) void {
@@ -148,7 +148,7 @@ pub const Renderer = struct {
             try submesh.bind();
             if (shader) |sh| try sh.bind();
             try submesh.shader.setUniformMat4f("u_mvp", mvp);
-            gl.drawElements(gl.TRIANGLES, @intCast(c_int, submesh.ib.count), gl.UNSIGNED_INT, null);
+            gl.drawElements(gl.triangles, submesh.ib.count, gl.unsingedInt);
         }
     }
 
@@ -160,7 +160,7 @@ pub const Renderer = struct {
         var renderer: *Renderer = windowRendererMap.get(&window).?;
         renderer.windowWidth = width;
         renderer.windowHeight = height;
-        gl.viewport(0, 0, @intCast(c_int, width), @intCast(c_int, height));
+        gl.viewport(0, 0, width, height);
     }
 
     fn glGetProcAddress(window: glfw.Window, proc: [:0]const u8) ?gl.FunctionPointer {
@@ -178,9 +178,9 @@ pub const VertexBuffer = struct {
 
     pub fn init(data: []const u8, layout: VertexBufferLayout) VertexBuffer {
         var id: u32 = 0;
-        gl.genBuffers(1, &id);
-        gl.bindBuffer(gl.ARRAY_BUFFER, id);
-        gl.bufferData(gl.ARRAY_BUFFER, data.len, @ptrCast(?*anyopaque, data.prt), gl.STATIC_DRAW);
+        gl.genBuffers(1, .{&id});
+        gl.bindBuffer(gl.arrayBuffer, id);
+        gl.bufferData(gl.arrayBuffer, data, gl.staticDraw);
         layout.bind();
         return VertexBuffer{
             .glId = id,
@@ -191,7 +191,7 @@ pub const VertexBuffer = struct {
     pub fn destroy(self: *@This()) void {
         if (self.glId > 0) {
             self.unbind();
-            gl.deleteBuffers(1, &self.glId);
+            gl.deleteBuffers(1, .{&self.glId});
             self.glId = 0;
             self.layout.destroy();
         }
@@ -203,13 +203,13 @@ pub const VertexBuffer = struct {
     }
 
     pub fn unbind(_: @This()) void {
-        gl.bindBuffer(gl.ARRAY_BUFFER, 0);
+        gl.bindBuffer(gl.arrayBuffer, 0);
     }
 };
 
 pub const VertexBufferLayout = struct {
     elements: std.ArrayList(VertexBufferElement),
-    stride: u32 = 0,
+    stride: usize = 0,
 
     pub fn init() VertexBufferLayout {
         return VertexBufferLayout{
@@ -223,38 +223,38 @@ pub const VertexBufferLayout = struct {
 
     pub fn push(self: *@This(), comptime T: type, count: u32, normalized: bool) void {
         const glType: u32 = switch (T) {
-            @TypeOf(i32) => gl.INT,
-            @TypeOf(f32) => gl.FLOAT,
-            @TypeOf(u8) => gl.UNSIGNED_BYTE,
+            i32 => gl.INT,
+            f32 => gl.FLOAT,
+            u8 => gl.UNSIGNED_BYTE,
             else => @compileError("Failed to match value type in vertex buffer layout."),
         };
 
-        self.elements.append(.{ glType, count, @boolToInt(normalized) });
+        self.elements.append(.{ .type = glType, .count = count, .normalized = normalized }) catch unreachable;
         self.stride += VertexBufferElement.getSizeOfType(glType) * count;
     }
 
     pub fn bind(self: @This()) void {
-        var offset: u32 = 0;
-        for (0..self.elements.items.len) |i| {
-            const element: VertexBufferElement = self.elements[i];
-            gl.enableVertexAttribArray(i);
-            gl.vertexAttribPointer(i, element.count, element.type, element.normalized, self.stride, @ptrCast(?*const anyopaque, &offset));
+        var offset: usize = 0;
+        for (self.elements.items, 0..) |element, i| {
+            const idx = @intCast(c_uint, i);
+            gl.enableVertexAttribArray(idx);
+            gl.vertexAttribPointer(idx, element.count, element._type, element.normalized, self.stride, offset);
             offset += element.count * VertexBufferElement.getSizeOfType(element.type);
         }
     }
 };
 
 pub const VertexBufferElement = struct {
-    type: u32,
-    count: u32,
-    normalized: u8,
+    _type: gl.glEnum,
+    count: usize,
+    normalized: bool,
 
-    pub fn getSizeOfType(glType: u32) usize {
+    pub fn getSizeOfType(glType: gl.glEnum) usize {
         return switch (glType) {
-            gl.FLOAT => 4,
-            gl.INT => 4,
-            gl.UNSIGNED_BYTE => 1,
-            _ => 0,
+            gl.float => 4,
+            gl.int => 4,
+            gl.unsignedByte => 1,
+            else => 0,
         };
     }
 };
@@ -266,11 +266,11 @@ pub const IndexBuffer = struct {
     glId: u32 = 0,
     count: u32 = 0,
 
-    pub fn init(data: []u32) IndexBuffer {
+    pub fn init(data: []const u32) IndexBuffer {
         var id: u32 = 0;
         gl.genBuffers(1, &id);
-        gl.bindBuffers(gl.ELEMENT_ARRAY_BUFFER, id);
-        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, data.len * @sizeOf(u32), @ptrCast(?*const anyopaque, data.ptr), gl.STATIC_DRAW);
+        gl.bindBuffer(gl.elementArrayBuffer, id);
+        gl.bufferData(gl.elementArrayBuffer, data, gl.staticDraw);
         return IndexBuffer{
             .glId = id,
             .count = data.len,
@@ -280,18 +280,18 @@ pub const IndexBuffer = struct {
     pub fn destroy(self: @This()) void {
         if (self.glId > 0) {
             self.unbind();
-            gl.deleteBuffers(1, &self.glId);
+            gl.deleteBuffers(1, .{self.glId});
             self.glId = 0;
         }
     }
 
     pub fn bind(self: @This()) !void {
         if (self.glId == 0) return Error.BindError;
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, self.glId);
+        gl.bindBuffer(gl.elementArrayBuffer, self.glId);
     }
 
     pub fn unbind(_: @This()) void {
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, 0);
+        gl.bindBuffer(gl.elementArrayBuffer, 0);
     }
 };
 
@@ -328,7 +328,7 @@ pub const Texture = struct {
     pub fn destroy(self: *@This()) void {
         if (self.glId > 0) {
             self.unbind();
-            gl.deleteTextures(1, &self.glId);
+            gl.deleteTextures(1, .{self.glId});
             self.glId = 0;
             self.width = 0;
             self.height = 0;
@@ -338,23 +338,23 @@ pub const Texture = struct {
 
     pub fn bind(self: @This()) !void {
         if (self.glId == 0) return Error.BindError;
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, self.glId);
+        gl.activeTexture(gl.texture0);
+        gl.bindTexture(gl.texture2d, self.glId);
     }
 
     pub fn unbind(_: @This()) void {
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, 0);
+        gl.activeTexture(gl.texture0);
+        gl.bindTexture(gl.texture2d, 0);
     }
 
     fn loadIntoGpu(self: *@This(), data: []u8, width: u32, height: u32, format: Image.Format) !void {
-        gl.genTextures(1, &self.glId);
-        gl.bindTexture(gl.TEXTURE_2D, self.glId);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-        gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+        gl.genTextures(1, .{self.glId});
+        gl.bindTexture(gl.texture2d, self.glId);
+        gl.texParameteri(gl.texture2d, gl.textureMinFilter, gl.linear);
+        gl.texParameteri(gl.texture2d, gl.textureMagFilter, gl.linear);
+        gl.texParameteri(gl.texture2d, gl.textureWrapS, gl.clampToEdge);
+        gl.texParameteri(gl.texture2d, gl.textureWrapT, gl.clampToEdge);
+        gl.pixelStorei(gl.unpackAlignment, 1);
         const glImageFormat = Image.getGLFormat(format);
         gl.texImage2D(gl.TEXTURE_2D, 0, glImageFormat, @intCast(c_int, width), @intCast(c_int, height), 0, @intCast(c_uint, glImageFormat), gl.UNSIGNED_BYTE, @ptrCast(?*const anyopaque, data.ptr));
         gl.bindTexture(gl.TEXTURE_2D, 0);
@@ -443,8 +443,8 @@ pub const Image = struct {
 
     fn getGLFormat(format: Format) c_int {
         return switch (format) {
-            .png => gl.RGBA,
-            .jpeg, .bmp, .jpg => gl.RGB,
+            .png => gl.rgba,
+            .jpeg, .bmp, .jpg => gl.rgb,
             .none => 0,
         };
     }
@@ -652,12 +652,12 @@ pub const Mesh = struct {
 
     pub fn init(vb: VertexBuffer, submeshes: ?[]SubMesh) Mesh {
         const alloc = utils.gpalloc();
-        const mesh = Mesh{
+        var mesh = Mesh{
             .vb = vb,
             .submeshes = std.ArrayList(SubMesh).init(alloc),
         };
         if (submeshes) |subs| {
-            mesh.submeshes.appendSlice(subs);
+            mesh.submeshes.appendSlice(subs) catch unreachable;
         }
         return mesh;
     }
